@@ -1,0 +1,75 @@
+name: CI/CD for Frontend
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci;
+          else
+            npm install;
+          fi
+
+      - name: Run tests
+        run: |
+          if ls **/*.spec.ts **/*.test.ts 1> /dev/null 2>&1; then
+            npm test;
+          else
+            echo 'No tests found, skipping test step';
+          fi
+
+      - name: Build application
+        run: npm run build
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: ci
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Validate Vercel secrets
+        run: |
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo '::error::VERCEL_TOKEN or VERCEL_PROJECT_ID is missing';
+            exit 1;
+          fi
+
+      - name: Upload files to Vercel
+        run: |
+          for file in $(find Frontend -type f); do
+            sha=$(sha1sum "$file" | awk '{ print $1 }');
+            curl -X PUT "https://api.vercel.com/v2/files" \
+              -H "Authorization: Bearer $VERCEL_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"file":"'$file'", "sha":"'$sha'"}';
+          done
+
+      - name: Deploy to Vercel
+        run: |
+          curl -X POST "https://api.vercel.com/v13/deployments?teamId=$VERCEL_ORG_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"project":"'$VERCEL_PROJECT_ID'", "files": [{"file":"'$file'", "sha":"'$sha'"}]}';
